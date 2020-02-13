@@ -121,3 +121,10 @@ def train_ch5(net, train_iter, test_iter, batch_size, optimizer, device, num_epo
 lr, num_epochs = 0.001, 5
 optimizer = torch.optim.Adam(net.parameters(), lr=lr)
 train_ch5(net, train_iter, test_iter, batch_size, optimizer, device, num_epochs)
+
+
+# training on  cpu
+# epoch 1, loss 1.8572, train acc 0.317, test acc 0.586, time 157.6 sec
+# epoch 2, loss 0.4690, train acc 0.637, test acc 0.692, time 159.7 sec
+# epoch 3, loss 0.2487, train acc 0.724, test acc 0.739, time 161.8 sec
+# 。。

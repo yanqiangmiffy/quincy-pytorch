@@ -55,3 +55,4 @@ print(X.shape)
 
 pool2d = nn.MaxPool2d(3, padding=1, stride=2)
 print(pool2d(X))
+
