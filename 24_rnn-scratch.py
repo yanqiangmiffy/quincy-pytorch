@@ -5,7 +5,7 @@
 author:yanqiang
 @time: 2019/04/09
 @file: main.py
-@description: 
+@description:
 
 """
 import time
@@ -110,16 +110,16 @@ def predict_rnn(prefix, num_chars, rnn, params, init_rnn_state,
                 num_hiddens, vocab_size, device, idx_to_char, char_to_idx):
     """
 
-    :param prefix:
-    :param num_chars:
-    :param rnn:
-    :param params:
-    :param init_rnn_state:
-    :param num_hiddens:
-    :param vocab_size:
+    :param prefix:前缀 比如<start>
+    :param num_chars:序列长度
+    :param rnn:rnn模型
+    :param params:参数
+    :param init_rnn_state:初始化隐层向量
+    :param num_hiddens:隐层单元个数
+    :param vocab_size:词汇表大小
     :param device:
-    :param idx_to_char:
-    :param char_to_idx:
+    :param idx_to_char:词汇列表
+    :param char_to_idx:字符到索引的映射
     :return:
     """
     state = init_rnn_state(1, num_hiddens, device)
@@ -135,5 +135,87 @@ def predict_rnn(prefix, num_chars, rnn, params, init_rnn_state,
         else:
             output.append(int(Y[0].argmax(dim=1).item()))
     return ''.join([idx_to_char[i] for i in output])
-res=predict_rnn('分开', 10, rnn, params, init_rnn_state, num_hiddens, vocab_size,
-            device, idx_to_char, char_to_idx)
+
+
+res = predict_rnn('分开', 10, rnn, params, init_rnn_state, num_hiddens, vocab_size,
+                  device, idx_to_char, char_to_idx)
+
+
+# 梯度剪切
+def grad_clipping(params, theta, device):
+    """
+    :param params:
+    :param theta:
+    :param device:
+    :return:
+    """
+    norm = torch.tensor([0.0], device=device)
+    for param in params:
+        norm += (param.grad.data ** 2).sum()
+    norm = norm.sqrt().item()
+    if norm > theta:
+        for param in params:
+            param.grad.data *= (theta / norm)
+
+
+# 困惑度
+def train_and_predict_rnn(rnn, get_params, init_rnn_state, num_hiddens,
+                          vocab_size, device, corus_indices, idx_to_char,
+                          char_to_idx, is_random_iter, num_epochs, num_steps,
+                          lr, clipping_theta, batch_size, pred_period,
+                          pred_len, prefixes):
+    if is_random_iter:
+        data_iter_fn = d2l.data_iter_random
+    else:
+        data_iter_fn = d2l.data_iter_consecutive
+    params = get_params()
+    loss = nn.CrossEntropyLoss()
+
+    for epoch in range(num_epochs):
+        if not is_random_iter:  # 如使用相邻采样，在epoch开始时初始化隐藏状态
+            state = init_rnn_state(batch_size, num_hiddens, device)
+        l_sum, n, start = 0.0, 0, time.time()
+        data_iter = data_iter_fn(corpus_indices, batch_size, num_steps, device)
+        for X, Y in data_iter:
+            if is_random_iter:  # 如使用随机采样，在每个小批量更新前初始化隐藏状态
+                state = init_rnn_state(batch_size, num_hiddens, device)
+            else:  # 否则需要使用detach函数从计算图分离隐藏状态
+                for s in state:
+                    s.detach_()
+
+            inputs = to_onehot(X, vocab_size)
+            # outputs有num_steps个形状为(batch_size, vocab_size)的矩阵
+            (outputs, state) = rnn(inputs, state, params)
+            # 拼接之后形状为(num_steps * batch_size, vocab_size)
+            outputs = torch.cat(outputs, dim=0)
+            # Y的形状是(batch_size, num_steps)，转置后再变成长度为
+            # batch * num_steps 的向量，这样跟输出的行一一对应
+            y = torch.transpose(Y, 0, 1).contiguous().view(-1)
+            # 使用交叉熵损失计算平均分类误差
+            l = loss(outputs, y.long())
+
+            # 梯度清0
+            if params[0].grad is not None:
+                for param in params:
+                    param.grad.data.zero_()
+            l.backward()
+            grad_clipping(params, clipping_theta, device)  # 裁剪梯度
+            d2l.sgd(params, lr, 1)  # 因为误差已经取过均值，梯度不用再做平均
+            l_sum += l.item() * y.shape[0]
+            n += y.shape[0]
+
+        if (epoch + 1) % pred_period == 0:
+            print('epoch %d, perplexity %f, time %.2f sec' % (epoch + 1, math.exp(l_sum / n), time.time() - start))
+            for prefix in prefixes:
+                print(' -', predict_rnn(prefix, pred_len, rnn, params, init_rnn_state,
+                                        num_hiddens, vocab_size, device, idx_to_char, char_to_idx))
+
+num_epochs, num_steps, batch_size, lr, clipping_theta = 250, 35, 32, 1e2, 1e-2
+pred_period, pred_len, prefixes = 50, 50, ['分开', '不分开']
+
+
+train_and_predict_rnn(rnn, get_params, init_rnn_state, num_hiddens,
+                      vocab_size, device, corpus_indices, idx_to_char,
+                      char_to_idx, True, num_epochs, num_steps, lr,
+                      clipping_theta, batch_size, pred_period, pred_len,
+                      prefixes)
